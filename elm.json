@@ -1,0 +1,18 @@
+{
+    "type": "package",
+    "name": "ad-si/elm-stylus",
+    "summary": "Stylus CSS preprocessor parser for Elm",
+    "license": "AGPL-3.0",
+    "version": "1.0.0",
+    "exposed-modules": [
+        "Stylus.Parser"
+    ],
+    "elm-version": "0.19.1 <= v < 0.20.0",
+    "dependencies": {
+        "elm/core": "1.0.0 <= v < 2.0.0",
+        "elm/parser": "1.1.0 <= v < 2.0.0"
+    },
+    "test-dependencies": {
+        "elm-explorations/test": "1.2.2 <= v < 3.0.0"
+    }
+}
