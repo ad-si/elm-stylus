@@ -77,9 +77,15 @@ type alias Declaration =
     ( Property, Value )
 
 
+type alias RuleContent =
+    { declarations : List Declaration
+    , nestedRules : List Expression
+    }
+
+
 {-| -}
 type Expression
-    = Rule ( Selectors, List Declaration )
+    = Rule ( Selectors, RuleContent )
     | Comment String
     | Newlines
 
@@ -119,7 +125,8 @@ selector =
             |. chompWhile isValidSelector
 
 
-{-| -}
+{-| Parse selectors ending with newline
+-}
 selectors : StyParser Selectors
 selectors =
     sequence
@@ -130,6 +137,15 @@ selectors =
         , item = selector
         , trailing = Forbidden
         }
+
+
+{-| Parse selectors without requiring newline ending (for nested rules)
+-}
+selectorsNoNewline : StyParser Selectors
+selectorsNoNewline =
+    succeed (\s -> [ s ])
+        |= selector
+        |. symbol (Token "\n" GenericProblem)
 
 
 property : StyParser Property
@@ -153,7 +169,125 @@ comment =
     map Comment (getChompedString (chompUntilEndOr "\n"))
 
 
-{-| -}
+{-| Parse a single declaration or nested rule within a rule block
+-}
+ruleContentItem :
+    RuleContent
+    -> StyParser (Step RuleContent RuleContent)
+ruleContentItem content =
+    oneOf
+        [ backtrackable <|
+            succeed (\a b -> Loop { content | declarations = ( a, b ) :: content.declarations })
+                |. symbol (Token "  " GenericProblem)
+                |= property
+                |. symbol (Token " " GenericProblem)
+                |= value
+                |. symbol (Token "\n" GenericProblem)
+        , succeed (\nestedRuleExpr -> Loop { content | nestedRules = nestedRuleExpr :: content.nestedRules })
+            |. symbol (Token "  " GenericProblem)
+            |= nestedRuleIndented
+        , succeed ()
+            |> map (\_ -> Done { declarations = List.reverse content.declarations, nestedRules = List.reverse content.nestedRules })
+        ]
+
+
+{-| Parse nested rule with proper indentation
+-}
+nestedRuleIndented : StyParser Expression
+nestedRuleIndented =
+    inContext (Definition "nested-rule") <|
+        succeed (\a b -> Rule ( a, b ))
+            |= selectorsNoNewline
+            |= nestedRuleContent
+
+
+{-| Parse content of nested rules with deeper indentation
+-}
+nestedRuleContent : StyParser RuleContent
+nestedRuleContent =
+    loop { declarations = [], nestedRules = [] } nestedRuleContentItem
+
+
+{-| Parse items within nested rules (declarations or further nested rules)
+-}
+nestedRuleContentItem :
+    RuleContent
+    -> StyParser (Step RuleContent RuleContent)
+nestedRuleContentItem content =
+    oneOf
+        [ backtrackable <|
+            succeed (\a b -> Loop { content | declarations = ( a, b ) :: content.declarations })
+                |. symbol (Token "    " GenericProblem)
+                -- 4 spaces for nested rule declarations
+                |= property
+                |. symbol (Token " " GenericProblem)
+                |= value
+                |. symbol (Token "\n" GenericProblem)
+        , succeed (\nestedRuleExpr -> Loop { content | nestedRules = nestedRuleExpr :: content.nestedRules })
+            |. symbol (Token "    " GenericProblem)
+            -- 4 spaces for further nested rules
+            |= furtherNestedRule
+        , succeed ()
+            |> map (\_ -> Done { declarations = List.reverse content.declarations, nestedRules = List.reverse content.nestedRules })
+        ]
+
+
+{-| Parse further nested rules
+-}
+furtherNestedRule : StyParser Expression
+furtherNestedRule =
+    inContext (Definition "further-nested-rule") <|
+        succeed (\a b -> Rule ( a, b ))
+            |= selectorsNoNewline
+            |= furtherNestedRuleContent
+
+
+{-| Parse content of further nested rules
+-}
+furtherNestedRuleContent : StyParser RuleContent
+furtherNestedRuleContent =
+    loop { declarations = [], nestedRules = [] } furtherNestedRuleContentItem
+
+
+{-| Parse items within further nested rules
+-}
+furtherNestedRuleContentItem :
+    RuleContent
+    -> StyParser (Step RuleContent RuleContent)
+furtherNestedRuleContentItem content =
+    oneOf
+        [ backtrackable <|
+            succeed (\a b -> Loop { content | declarations = ( a, b ) :: content.declarations })
+                |. symbol (Token "      " GenericProblem)
+                -- 6 spaces for further nested declarations
+                |= property
+                |. symbol (Token " " GenericProblem)
+                |= value
+                |. symbol (Token "\n" GenericProblem)
+        , succeed ()
+            |> map (\_ -> Done { declarations = List.reverse content.declarations, nestedRules = List.reverse content.nestedRules })
+        ]
+
+
+{-| Parse nested rule (selector + content)
+-}
+nestedRule : StyParser Expression
+nestedRule =
+    inContext (Definition "nested-rule") <|
+        succeed (\a b -> Rule ( a, b ))
+            |= selectors
+            |= ruleContent
+
+
+{-| Parse rule content (declarations and nested rules)
+-}
+ruleContent : StyParser RuleContent
+ruleContent =
+    loop { declarations = [], nestedRules = [] } ruleContentItem
+
+
+{-| Parse a declaration (kept for backwards compatibility)
+-}
 declaration :
     List Declaration
     -> StyParser (Step (List Declaration) (List Declaration))
@@ -170,19 +304,21 @@ declaration dcls =
         ]
 
 
-{-| -}
+{-| Parse declarations (kept for backwards compatibility)
+-}
 declarations : StyParser (List Declaration)
 declarations =
     loop [] declaration
 
 
-{-| -}
+{-| Parse a top-level rule
+-}
 rule : StyParser Expression
 rule =
     inContext (Definition "rule") <|
         succeed (\a b -> Rule ( a, b ))
             |= selectors
-            |= declarations
+            |= ruleContent
 
 
 {-| -}
@@ -235,6 +371,41 @@ stylus =
     loop [] section
 
 
+flattenRule : List String -> RuleContent -> List Expression
+flattenRule parentSelectors content =
+    let
+        currentRule =
+            if List.isEmpty content.declarations then
+                []
+
+            else
+                [ Rule ( parentSelectors, { declarations = content.declarations, nestedRules = [] } ) ]
+
+        nestedFlattened =
+            content.nestedRules
+                |> List.concatMap (flattenNestedRule parentSelectors)
+    in
+    currentRule ++ nestedFlattened
+
+
+flattenNestedRule : List String -> Expression -> List Expression
+flattenNestedRule parentSelectors expr =
+    case expr of
+        Rule ( childSelectors, childContent ) ->
+            let
+                combinedSelectors =
+                    List.concatMap
+                        (\parent ->
+                            List.map (\child -> parent ++ " " ++ child) childSelectors
+                        )
+                        parentSelectors
+            in
+            flattenRule combinedSelectors childContent
+
+        other ->
+            [ other ]
+
+
 serializeExpression : Expression -> String
 serializeExpression expression =
     case expression of
@@ -244,22 +415,38 @@ serializeExpression expression =
         Comment string ->
             "/*" ++ string ++ "*/\n"
 
-        Rule ( selectrs, decls ) ->
+        Rule ( selectorList, content ) ->
             let
                 decToCss decTuple =
                     Tuple.first decTuple ++ ":" ++ Tuple.second decTuple
             in
-            String.join ", " selectrs
-                ++ "{"
-                ++ String.join ";" (List.map decToCss decls)
-                ++ "}\n"
+            if List.isEmpty content.declarations then
+                ""
+
+            else
+                String.join ", " selectorList
+                    ++ "{"
+                    ++ String.join ";" (List.map decToCss content.declarations)
+                    ++ "}\n"
 
 
 {-| -}
 serializeStylusAst : List Expression -> String
 serializeStylusAst stylusAst =
-    String.join ""
-        (List.map serializeExpression stylusAst)
+    stylusAst
+        |> List.concatMap flattenExpression
+        |> List.map serializeExpression
+        |> String.join ""
+
+
+flattenExpression : Expression -> List Expression
+flattenExpression expr =
+    case expr of
+        Rule ( selectorList, content ) ->
+            flattenRule selectorList content
+
+        other ->
+            [ other ]
 
 
 {-|

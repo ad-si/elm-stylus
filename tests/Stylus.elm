@@ -1,12 +1,18 @@
 module Stylus exposing (..)
 
 import Expect exposing (Expectation)
+import Fuzz exposing (Fuzzer)
 import List exposing (foldr)
 import Parser.Advanced exposing (Step(..), run)
 import String exposing (join)
 import Stylus.Parser exposing (..)
 import Test exposing (..)
 import Tuple exposing (..)
+
+
+makeRule : ( List String, List ( String, String ) ) -> Expression
+makeRule ( selectors, declarations ) =
+    Rule ( selectors, { declarations = declarations, nestedRules = [] } )
 
 
 newlineFold : List String -> String
@@ -51,7 +57,7 @@ primitiveTests =
             \_ ->
                 Expect.equal
                     (Ok
-                        (Rule
+                        (makeRule
                             ( [ "h1.important" ]
                             , [ ( "display", "inline-block" )
                               , ( "margin", "0" )
@@ -96,7 +102,7 @@ stylusTests =
             \_ ->
                 Expect.equal
                     (Ok
-                        (Rule
+                        (makeRule
                             ( [ "h1.important" ]
                             , [ ( "display", "inline-block" )
                               , ( "margin", "0" )
@@ -117,7 +123,7 @@ stylusTests =
                 Expect.equal
                     (Ok
                         (Loop
-                            [ Rule
+                            [ makeRule
                                 ( [ "h1.important" ]
                                 , [ ( "display", "inline-block" )
                                   , ( "margin", "0" )
@@ -138,7 +144,7 @@ stylusTests =
             \_ ->
                 Expect.equal
                     (Ok
-                        [ Rule
+                        [ makeRule
                             ( [ "h1.important" ]
                             , [ ( "display"
                                 , "inline-block"
@@ -147,14 +153,14 @@ stylusTests =
                               , ( "font-size", "2em" )
                               ]
                             )
-                        , Rule
+                        , makeRule
                             ( [ ".alert" ]
                             , [ ( "color"
                                 , "rgb(50, 50, 50)"
                                 )
                               ]
                             )
-                        , Rule
+                        , makeRule
                             ( [ ".primary" ]
                             , [ ( "font-weight"
                                 , "900"
@@ -179,7 +185,7 @@ stylusTests =
             \_ ->
                 Expect.equal
                     (Ok
-                        [ Rule
+                        [ makeRule
                             ( [ "h1.important" ]
                             , [ ( "display", "inline-block" )
                               , ( "margin", "0" )
@@ -187,7 +193,7 @@ stylusTests =
                               ]
                             )
                         , Comment "Just like that"
-                        , Rule
+                        , makeRule
                             ( [ ".alert" ]
                             , [ ( "color"
                                 , "rgb(50, 50, 50)"
@@ -217,7 +223,7 @@ stylusTests =
             \_ ->
                 Expect.equal
                     (Ok
-                        [ Rule
+                        [ makeRule
                             ( [ "h1.important" ]
                             , [ ( "display"
                                 , "inline-block"
@@ -229,7 +235,7 @@ stylusTests =
                         , Newlines
                         , Comment "Just like that"
                         , Newlines
-                        , Rule
+                        , makeRule
                             ( [ ".alert" ]
                             , [ ( "color"
                                 , "rgb(50, 50, 50)"
@@ -265,7 +271,7 @@ stylusAstToCssTests =
                         ++ "{display:inline-block;margin:0;font-size:2em}\n"
                     )
                     (serializeStylusAst
-                        [ Rule
+                        [ makeRule
                             ( [ "h1.important" ]
                             , [ ( "display", "inline-block" )
                               , ( "margin", "0" )
@@ -283,7 +289,7 @@ stylusAstToCssTests =
                         ++ ".primary{font-weight:900}\n"
                     )
                     (serializeStylusAst
-                        [ Rule
+                        [ makeRule
                             ( [ "h1.important" ]
                             , [ ( "display"
                                 , "inline-block"
@@ -292,14 +298,14 @@ stylusAstToCssTests =
                               , ( "font-size", "2em" )
                               ]
                             )
-                        , Rule
+                        , makeRule
                             ( [ ".alert" ]
                             , [ ( "color"
                                 , "rgb(50, 50, 50)"
                                 )
                               ]
                             )
-                        , Rule
+                        , makeRule
                             ( [ ".primary" ]
                             , [ ( "font-weight"
                                 , "900"
@@ -321,7 +327,7 @@ stylusAstToCssTests =
                         ++ "/*A lot of special chars : . // $ % ^ **/\n"
                     )
                     (serializeStylusAst
-                        [ Rule
+                        [ makeRule
                             ( [ "h1.important" ]
                             , [ ( "display", "inline-block" )
                               , ( "margin", "0" )
@@ -329,7 +335,7 @@ stylusAstToCssTests =
                               ]
                             )
                         , Comment "Just like that"
-                        , Rule
+                        , makeRule
                             ( [ ".alert" ]
                             , [ ( "color"
                                 , "rgb(50, 50, 50)"
@@ -356,7 +362,7 @@ stylusAstToCssTests =
                     )
                     (serializeStylusAst
                         [ Newlines
-                        , Rule
+                        , makeRule
                             ( [ "h1.important" ]
                             , [ ( "display"
                                 , "inline-block"
@@ -368,7 +374,7 @@ stylusAstToCssTests =
                         , Newlines
                         , Comment "Just like that"
                         , Newlines
-                        , Rule
+                        , makeRule
                             ( [ ".alert" ]
                             , [ ( "color"
                                 , "rgb(50, 50, 50)"
@@ -476,6 +482,67 @@ stylusToCssTests =
         ]
 
 
+nestedRulesTests : Test
+nestedRulesTests =
+    describe "Nested Rules"
+        [ test "Simple nested rule" <|
+            \_ ->
+                let
+                    stylusStr =
+                        ""
+                            ++ ".navbar\n"
+                            ++ "  background blue\n"
+                            ++ "  ul\n"
+                            ++ "    list-style none\n"
+
+                    expectedCss =
+                        ""
+                            ++ ".navbar{background:blue}\n"
+                            ++ ".navbar ul{list-style:none}\n"
+                in
+                Expect.equal (Ok expectedCss) (stylusToCss stylusStr)
+        , test "Multiple levels of nesting" <|
+            \_ ->
+                let
+                    stylusStr =
+                        ""
+                            ++ ".navbar\n"
+                            ++ "  background blue\n"
+                            ++ "  ul\n"
+                            ++ "    list-style none\n"
+                            ++ "    li\n"
+                            ++ "      padding 5px\n"
+
+                    expectedCss =
+                        ""
+                            ++ ".navbar{background:blue}\n"
+                            ++ ".navbar ul{list-style:none}\n"
+                            ++ ".navbar ul li{padding:5px}\n"
+                in
+                Expect.equal (Ok expectedCss) (stylusToCss stylusStr)
+        , test "Multiple nested rules with mixed content" <|
+            \_ ->
+                let
+                    stylusStr =
+                        ""
+                            ++ ".container\n"
+                            ++ "  width 100%\n"
+                            ++ "  .header\n"
+                            ++ "    background red\n"
+                            ++ "  .footer\n"
+                            ++ "    background blue\n"
+                            ++ "    color white\n"
+
+                    expectedCss =
+                        ""
+                            ++ ".container{width:100%}\n"
+                            ++ ".container .header{background:red}\n"
+                            ++ ".container .footer{background:blue;color:white}\n"
+                in
+                Expect.equal (Ok expectedCss) (stylusToCss stylusStr)
+        ]
+
+
 suite : Test
 suite =
     describe "Stylus Parser"
@@ -486,6 +553,11 @@ suite =
                         (run selectors "h1, h2, h3\n")
             ]
         , primitiveTests
+        , nestedRulesTests
+        , edgeCaseTests
+        , errorHandlingTests
+        , performanceTests
+        , fuzzTests
         , describe "Complete Parser"
             [ test "Parsing of complete file" <|
                 \_ ->
@@ -518,4 +590,276 @@ suite =
                     in
                     Expect.equal (Ok cssStr) (stylusToCss stylusStr)
             ]
+        ]
+
+
+edgeCaseTests : Test
+edgeCaseTests =
+    describe "Edge Cases"
+        [ test "Rule without declarations" <|
+            \_ ->
+                Expect.equal
+                    (Ok (Rule ( [ ".empty" ], { declarations = [], nestedRules = [] } )))
+                    (run rule ".empty\n")
+        , test "Value with special characters" <|
+            \_ ->
+                let
+                    specialValue =
+                        "rgb(255, 128, 0)"
+
+                    input =
+                        "  color " ++ specialValue ++ "\n"
+                in
+                Expect.equal
+                    (Ok (Loop [ ( "color", specialValue ) ]))
+                    (run (declaration []) input)
+        , test "Nested rule at maximum depth" <|
+            \_ ->
+                let
+                    stylusStr =
+                        ".a\n"
+                            ++ "  color red\n"
+                            ++ "  .b\n"
+                            ++ "    color green\n"
+                            ++ "    .c\n"
+                            ++ "      color blue\n"
+
+                    expectedCss =
+                        ".a{color:red}\n"
+                            ++ ".a .b{color:green}\n"
+                            ++ ".a .b .c{color:blue}\n"
+                in
+                Expect.equal (Ok expectedCss) (stylusToCss stylusStr)
+        , test "Multiple selectors with nested rules" <|
+            \_ ->
+                let
+                    stylusStr =
+                        "h1, h2, h3\n"
+                            ++ "  margin 0\n"
+                            ++ "  span\n"
+                            ++ "    font-weight bold\n"
+
+                    expectedCss =
+                        "h1, h2, h3{margin:0}\n"
+                            ++ "h1 span, h2 span, h3 span{font-weight:bold}\n"
+                in
+                Expect.equal (Ok expectedCss) (stylusToCss stylusStr)
+        , test "Empty input" <|
+            \_ ->
+                Expect.equal (Ok "") (stylusToCss "")
+        , test "Only comments" <|
+            \_ ->
+                let
+                    stylusStr =
+                        "// Just a comment\n// Another comment\n"
+
+                    expectedCss =
+                        "/*Just a comment*/\n/*Another comment*/\n"
+                in
+                Expect.equal (Ok expectedCss) (stylusToCss stylusStr)
+        , test "Only newlines" <|
+            \_ ->
+                let
+                    stylusStr =
+                        "\n\n\n"
+
+                    expectedCss =
+                        "\n"
+                in
+                Expect.equal (Ok expectedCss) (stylusToCss stylusStr)
+        ]
+
+
+errorHandlingTests : Test
+errorHandlingTests =
+    describe "Error Handling"
+        [ test "Empty selector fails" <|
+            \_ ->
+                Expect.err (run selector "")
+        , test "Empty property fails" <|
+            \_ ->
+                Expect.err (run (declaration []) "  \n")
+        ]
+
+
+performanceTests : Test
+performanceTests =
+    describe "Performance Tests"
+        [ test "Large number of rules" <|
+            \_ ->
+                let
+                    generateRule n =
+                        ".rule" ++ String.fromInt n ++ "\n  color red\n"
+
+                    stylusStr =
+                        List.range 1 50
+                            |> List.map generateRule
+                            |> String.concat
+                in
+                case stylusToCss stylusStr of
+                    Ok css ->
+                        Expect.equal True (String.contains ".rule50{" css)
+
+                    Err _ ->
+                        Expect.fail "Should parse successfully"
+        , test "Three-level nesting works" <|
+            \_ ->
+                let
+                    stylusStr =
+                        ".level1\n"
+                            ++ "  color red\n"
+                            ++ "  .level2\n"
+                            ++ "    color green\n"
+                            ++ "    .level3\n"
+                            ++ "      color blue\n"
+                in
+                case stylusToCss stylusStr of
+                    Ok css ->
+                        Expect.equal True
+                            (String.contains ".level1 .level2 .level3{" css)
+
+                    Err _ ->
+                        Expect.fail "Should parse three-level nested rules"
+        ]
+
+
+
+-- Fuzz test generators
+
+
+validSelectorChar : Fuzzer Char
+validSelectorChar =
+    Fuzz.oneOf
+        [ Fuzz.char
+            |> Fuzz.map
+                (\c ->
+                    if Char.isAlpha c then
+                        c
+
+                    else
+                        'a'
+                )
+        , Fuzz.constant '.'
+        , Fuzz.constant '#'
+        , Fuzz.constant '-'
+        , Fuzz.constant '_'
+        ]
+
+
+validPropertyChar : Fuzzer Char
+validPropertyChar =
+    Fuzz.oneOf
+        [ Fuzz.char
+            |> Fuzz.map
+                (\c ->
+                    if Char.isAlpha c then
+                        c
+
+                    else
+                        'a'
+                )
+        , Fuzz.constant '-'
+        , Fuzz.constant '_'
+        ]
+
+
+validValueChar : Fuzzer Char
+validValueChar =
+    Fuzz.oneOf
+        [ Fuzz.char
+            |> Fuzz.map
+                (\c ->
+                    if Char.isAlphaNum c then
+                        c
+
+                    else
+                        'a'
+                )
+        , Fuzz.constant ' '
+        , Fuzz.constant '.'
+        , Fuzz.constant ','
+        , Fuzz.constant '('
+        , Fuzz.constant ')'
+        , Fuzz.constant '#'
+        , Fuzz.constant '%'
+        ]
+
+
+simpleSelector : Fuzzer String
+simpleSelector =
+    Fuzz.map2 String.cons
+        (Fuzz.oneOf [ Fuzz.constant '.', Fuzz.constant '#', validPropertyChar ])
+        (Fuzz.map (String.fromList >> String.left 20) (Fuzz.list validSelectorChar))
+        |> Fuzz.map (String.filter (\c -> c /= ' '))
+
+
+
+-- Remove spaces which aren't valid at start
+
+
+simpleProperty : Fuzzer String
+simpleProperty =
+    Fuzz.map2 String.cons
+        validPropertyChar
+        (Fuzz.map (String.fromList >> String.left 15) (Fuzz.list validPropertyChar))
+
+
+simpleValue : Fuzzer String
+simpleValue =
+    Fuzz.map2 String.cons
+        validValueChar
+        (Fuzz.map (String.fromList >> String.left 20) (Fuzz.list validValueChar))
+        |> Fuzz.map String.trim
+        |> Fuzz.map
+            (\s ->
+                if String.isEmpty s then
+                    "default"
+
+                else
+                    s
+            )
+
+
+fuzzTests : Test
+fuzzTests =
+    describe "Additional Robustness Tests"
+        [ test "Multiple declarations work" <|
+            \_ ->
+                let
+                    stylusStr =
+                        ""
+                            ++ ".test\n"
+                            ++ "  margin 0\n"
+                            ++ "  padding 1\n"
+                            ++ "  border 2\n"
+                in
+                case stylusToCss stylusStr of
+                    Ok css ->
+                        if String.contains ".test{" css then
+                            Expect.pass
+
+                        else
+                            Expect.fail ("Expected .test{ in CSS output: " ++ css)
+
+                    Err err ->
+                        Expect.fail "Should parse multiple declarations, got error"
+        , test "Two-level nesting works" <|
+            \_ ->
+                let
+                    stylusStr =
+                        ".level1\n"
+                            ++ "  color red\n"
+                            ++ "  .level2\n"
+                            ++ "    color blue\n"
+                in
+                case stylusToCss stylusStr of
+                    Ok css ->
+                        Expect.all
+                            [ \_ -> Expect.equal True (String.contains ".level1{color:red}" css)
+                            , \_ -> Expect.equal True (String.contains ".level1 .level2{color:blue}" css)
+                            ]
+                            ()
+
+                    Err _ ->
+                        Expect.fail "Should parse two-level nested rules"
         ]
