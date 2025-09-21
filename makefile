@@ -14,24 +14,19 @@ test:
 
 
 .PHONY: build
-build: test docs.json index.html
+build: test docs.json
 
 
 .PHONY: dev
 dev:
-	@echo -e "Go to http://localhost:8000/src/Website.elm to see the app\n\n"
 	bunx elm reactor
 
 
-docs.json: src elm.json node_modules
+docs.json: node_modules src elm.json
 	bunx elm make --docs=$@
 
 
-index.html: src elm.json node_modules
-	bunx elm make src/Website.elm
-
-
-node_modules: package.json package-lock.json
+node_modules: package.json bun.lock
 	if test ! -d $@; \
 	then npm install; \
 	fi
